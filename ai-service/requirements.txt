@@ -1,0 +1,26 @@
+# AI Service — Requirements
+# Install semua sekaligus: pip install -r requirements.txt
+
+# ── FastAPI (web server) ──────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-multipart        # untuk upload file
+
+# ── AI / LLM ─────────────────────────────────────────────────
+openai                  # DeepSeek pakai OpenAI-compatible API
+python-dotenv           # load .env file
+
+# ── PDF & DOCX Parser ────────────────────────────────────────
+pdfplumber              # extract teks dari PDF
+python-docx             # extract teks dari DOCX
+
+# ── Web Scraping ─────────────────────────────────────────────
+requests
+beautifulsoup4
+lxml                    # HTML parser untuk BeautifulSoup
+
+# ── (Opsional) OCR untuk file scan ───────────────────────────
+# Aktifkan kalau perlu OCR:
+# pytesseract
+# pdf2image
+# Pillow
