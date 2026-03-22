@@ -39,9 +39,11 @@ def export_to_postgresql():
         f.write('    tentang TEXT,\n')
         f.write('    tahun TEXT,\n')
         f.write('    bab TEXT,\n')
-        f.write('    Pasal TEXT,\n')
+        f.write('    pasal TEXT,\n')
         f.write('    isi TEXT NOT NULL,\n')
-        f.write('    sumber TEXT\n')
+        f.write('    sumber TEXT,\n')
+        f.write('    created_at TIMESTAMP NULL,\n')
+        f.write('    updated_at TIMESTAMP NULL\n')
         f.write(');\n\n')
         
         # Create indexes
@@ -49,7 +51,7 @@ def export_to_postgresql():
         f.write('CREATE INDEX idx_tentang ON peraturan(tentang);\n\n')
         
         # Insert data
-        f.write('INSERT INTO peraturan (uu_id, judul, tentang, tahun, bab, Pasal, isi, sumber) VALUES\n')
+        f.write('INSERT INTO peraturan (uu_id, judul, tentang, tahun, bab, pasal, isi, sumber, created_at, updated_at) VALUES\n')
         
         values_list = []
         for i, row in enumerate(rows):
@@ -62,6 +64,8 @@ def export_to_postgresql():
                     # Escape single quotes and backslashes
                     escaped = str(v).replace("\\", "\\\\").replace("'", "''")
                     vals.append(f"'{escaped}'")
+            vals.append('NOW()')
+            vals.append('NOW()')
             values_list.append('(' + ', '.join(vals) + ')')
         
         # Write in batches
@@ -69,7 +73,7 @@ def export_to_postgresql():
         for i in range(0, len(values_list), batch_size):
             batch = values_list[i:i+batch_size]
             if i > 0:
-                f.write('\nINSERT INTO peraturan (uu_id, judul, tentang, tahun, bab, Pasal, isi, sumber) VALUES\n')
+                f.write('\nINSERT INTO peraturan (uu_id, judul, tentang, tahun, bab, pasal, isi, sumber, created_at, updated_at) VALUES\n')
             f.write(',\n'.join(batch) + ';\n')
         
         f.write('\n-- End of export\n')

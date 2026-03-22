@@ -18,13 +18,17 @@ from pydantic import BaseModel
 from typing import Optional, List
 import sys
 from pathlib import Path
-import json
 import io
+import os
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+from dotenv import load_dotenv
+from openai import OpenAI
 from retriever import retrieve_docs, format_for_prompt
+
+load_dotenv()
 
 app = FastAPI(
     title="APILA API",
@@ -51,6 +55,52 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     content: str
     sources: List[dict]
+
+
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+AI_SERVICE_PORT = int(os.getenv("AI_SERVICE_PORT", "8001"))
+
+
+def ask_deepseek(question: str, context: str, extracted_text: str = "") -> str:
+    """
+    Generate jawaban dengan DeepSeek (OpenAI-compatible API).
+    """
+    if not DEEPSEEK_API_KEY:
+        raise RuntimeError("DEEPSEEK_API_KEY belum diset.")
+
+    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+
+    system_prompt = (
+        "Kamu adalah APILA, asisten informasi hukum Indonesia. "
+        "Jawab dalam Bahasa Indonesia yang jelas dan ringkas. "
+        "Gunakan konteks hukum yang diberikan sebagai sumber utama. "
+        "Jika konteks kurang, sampaikan keterbatasan dan sarankan konsultasi LBH. "
+        "Selalu tambahkan disclaimer bahwa jawaban ini bukan nasihat hukum resmi."
+    )
+
+    user_prompt = (
+        f"Pertanyaan pengguna:\n{question}\n\n"
+        f"Konteks pasal/peraturan:\n{context}\n\n"
+    )
+
+    if extracted_text:
+        user_prompt += f"Teks dokumen yang diunggah pengguna:\n{extracted_text[:5000]}\n\n"
+
+    completion = client.chat.completions.create(
+        model=DEEPSEEK_MODEL,
+        temperature=0.1,
+        timeout=20,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+
+    content = completion.choices[0].message.content
+    if not content:
+        raise RuntimeError("DeepSeek mengembalikan respons kosong.")
+    return content.strip()
 
 
 @app.get("/")
@@ -94,9 +144,13 @@ def chat(request: ChatRequest):
         
         # Format documents as context
         context = format_for_prompt(docs)
-        
-        # Generate response based on retrieved documents and extracted text
-        response_content = generate_response(user_message, context, docs, context_text)
+
+        # Generate response with DeepSeek (fallback ke template jika API gagal)
+        try:
+            response_content = ask_deepseek(user_message, context, context_text)
+        except Exception as err:
+            print(f"DeepSeek call failed, using fallback: {err}")
+            response_content = generate_response(user_message, context, docs, context_text)
         
         # Format sources for frontend
         sources = [
@@ -149,7 +203,11 @@ async def process_document(
         if question:
             docs = retrieve_docs(f"{question}\n\nDokumen:\n{extracted_text}", top_k=5)
             context = format_for_prompt(docs) if docs else ""
-            response = generate_response(question, context, docs, extracted_text)
+            try:
+                response = ask_deepseek(question, context, extracted_text)
+            except Exception as err:
+                print(f"DeepSeek call failed, using fallback: {err}")
+                response = generate_response(question, context, docs, extracted_text)
             
             sources = [
                 {
@@ -292,7 +350,10 @@ def generate_response(question: str, context: str, docs: list, extracted_text: s
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting APILA API v2.0...")
-    print("📖 API documentation: http://localhost:8000/docs")
-    print("📝 Endpoint untuk dokumen: POST /process-document")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print("Starting APILA API v2.0...")
+    print(f"API documentation: http://localhost:{AI_SERVICE_PORT}/docs")
+    print("API docs endpoint ready.")
+    print("Document endpoint: POST /process-document")
+    if not DEEPSEEK_API_KEY:
+        print("WARNING: DEEPSEEK_API_KEY belum diset, mode fallback template aktif.")
+    uvicorn.run(app, host="0.0.0.0", port=AI_SERVICE_PORT)

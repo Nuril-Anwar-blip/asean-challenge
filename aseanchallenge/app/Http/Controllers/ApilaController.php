@@ -11,6 +11,11 @@ use App\Models\Message;
 
 class ApilaController extends Controller
 {
+    private function getAiServiceBaseUrl(): string
+    {
+        return rtrim((string) env('AI_SERVICE_URL', 'http://127.0.0.1:8001'), '/');
+    }
+
     /**
      * Menampilkan antarmuka obrolan APILA.
      */
@@ -26,10 +31,11 @@ class ApilaController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'message' => 'required|string',
+            'message' => 'nullable|string|required_without:file',
+            'file' => 'nullable|file|max:10240',
         ]);
 
-        $userMessage = $request->input('message');
+        $userMessage = trim((string) $request->input('message', ''));
         $file = $request->file('file');
 
         try {
@@ -41,7 +47,7 @@ class ApilaController extends Controller
                 $response = $this->chatWithAI($userMessage);
             }
 
-            if ($response['status'] === 'success') {
+            if (($response['status'] ?? null) === 'success') {
                 return response()->json([
                     'status' => 'success',
                     'data' => [
@@ -86,12 +92,12 @@ class ApilaController extends Controller
                 'file',
                 file_get_contents($file->getRealPath()),
                 $file->getClientOriginalName()
-            )->post('http://localhost:8000/process-document', [
+            )->post($this->getAiServiceBaseUrl() . '/process-document', [
                 'question' => $question,
             ]);
 
             if ($response->successful()) {
-                return $response->json();
+                return $this->normalizeAiServiceResponse($response->json(), true);
             }
         } catch (\Exception $e) {
             Log::error('Document processing error: ' . $e->getMessage());
@@ -106,16 +112,66 @@ class ApilaController extends Controller
     private function chatWithAI(string $message): array
     {
         try {
-            $response = Http::timeout(30)->post('http://localhost:8000/chat', [
+            $response = Http::timeout(30)->post($this->getAiServiceBaseUrl() . '/chat', [
                 'message' => $message,
                 'history' => []
             ]);
 
             if ($response->successful()) {
-                return $response->json();
+                return $this->normalizeAiServiceResponse($response->json(), false);
             }
         } catch (\Exception $e) {
             Log::error('AI Chat error: ' . $e->getMessage());
+        }
+
+        return ['status' => 'error'];
+    }
+
+    /**
+     * Normalisasi format respons AI service agar seragam ke frontend.
+     */
+    private function normalizeAiServiceResponse(array $payload, bool $isDocumentRequest): array
+    {
+        // Format v2 /chat -> {content, sources}
+        if (isset($payload['content']) && is_string($payload['content'])) {
+            return [
+                'status' => 'success',
+                'data' => [
+                    'content' => $payload['content'],
+                    'sources' => $payload['sources'] ?? [],
+                ],
+            ];
+        }
+
+        // Format /process-document -> {status, response, sources}
+        if (
+            ($payload['status'] ?? null) === 'success'
+            && isset($payload['response'])
+            && is_string($payload['response'])
+        ) {
+            return [
+                'status' => 'success',
+                'data' => [
+                    'content' => $payload['response'],
+                    'sources' => $payload['sources'] ?? [],
+                ],
+            ];
+        }
+
+        // Jika dokumen hanya diekstrak tanpa jawaban, beri respons informatif.
+        if (
+            $isDocumentRequest
+            && ($payload['status'] ?? null) === 'success'
+            && isset($payload['extracted_text'])
+            && is_string($payload['extracted_text'])
+        ) {
+            return [
+                'status' => 'success',
+                'data' => [
+                    'content' => "Dokumen berhasil diproses.\n\nRingkasan isi:\n" . $payload['extracted_text'],
+                    'sources' => [],
+                ],
+            ];
         }
 
         return ['status' => 'error'];
