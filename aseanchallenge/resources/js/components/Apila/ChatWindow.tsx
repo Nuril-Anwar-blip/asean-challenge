@@ -1,6 +1,176 @@
-import { Send, Paperclip, FileText, Loader2, Bot, User, X, Camera, Image, Mic, MicOff, Volume2 } from 'lucide-react';
+import { Send, Paperclip, FileText, Loader2, Bot, User, X, Camera, Image, Mic, MicOff, Volume2, ChevronDown, ChevronRight } from 'lucide-react';
 import React, { useState, useRef, useEffect } from 'react';
 import type { ChatMessage } from '@/pages/Apila/Index';
+
+// Function to strip markdown asterisks, hashtags and emojis
+function sanitizeText(text: string): string {
+    if (!text) return '';
+    // Strip markdown formatting like **, *, #
+    let clean = text.replace(/[*#]/g, '');
+    // Strip emojis using RegExp constructor to avoid TS static analysis errors on unicode escapes
+    const emojiRegex = new RegExp('[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F700}-\\u{1F77F}\\u{1F780}-\\u{1F7FF}\\u{1F800}-\\u{1F8FF}\\u{1F900}-\\u{1F9FF}\\u{1FA00}-\\u{1FA6F}\\u{1FA70}-\\u{1FAFF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}]', 'gu');
+    clean = clean.replace(emojiRegex, '');
+    return clean;
+}
+
+// Structured content parser for terminal-like display
+function FormattedChatContent({ content }: { content: string }) {
+    const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+
+    // Parse content into sections
+    const sections = parseContent(content);
+
+    const toggleSection = (key: string) => {
+        setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
+    };
+
+    if (sections.length === 0 || (sections.length === 1 && sections[0].title === 'Jawaban')) {
+        // Render as beautiful paragraphs, split by double newline to keep lists intact
+        const singleContent = sections.length === 1 ? sections[0].content : content;
+        const paragraphs = singleContent.split(/\n\s*\n/).filter(p => p.trim() !== '');
+        
+        return (
+            <div className="text-sm leading-relaxed text-gray-200 space-y-4">
+                {paragraphs.map((paragraph, idx) => (
+                    <div key={idx} className="whitespace-pre-wrap">
+                        {paragraph}
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-3">
+            {sections.map((section, idx) => {
+                const sectionKey = `${idx}-${section.title}`;
+                const isExpanded = expandedSections[sectionKey] !== false;
+
+                // Clean up title - remove dashes
+                const cleanTitle = section.title.replace(/^-+|-+$/g, '').trim();
+                const displayTitle = cleanTitle.replace(/^PENJELASAN$/i, 'PENJELASAN')
+                    .replace(/^DASAR HUKUM$/i, 'DASAR HUKUM')
+                    .replace(/^ARTI BAGI SITUASI ANDA$/i, 'ARTI BAGI SITUASI ANDA')
+                    .replace(/^SUDUT PANDANG ASISTEN$/i, 'SUDUT PANDANG ASISTEN')
+                    .replace(/^SARAN PRAKTIS$/i, 'SARAN PRAKTIS')
+                    .replace(/^DISCLAIMER$/i, 'DISCLAIMER');
+
+                // Style based on section type
+                const getSectionStyle = (title: string): string => {
+                    const t = title.toUpperCase();
+
+                    if (t.includes('PENJELASAN')) {
+
+                        return 'border-l-blue-500 bg-blue-500/5';
+                    }
+
+                    if (t.includes('DASAR HUKUM')) {
+
+                        return 'border-l-green-500 bg-green-500/5';
+                    }
+
+                    if (t.includes('ARTI BAGI')) {
+
+                        return 'border-l-purple-500 bg-purple-500/5';
+                    }
+
+                    if (t.includes('SUDUT PANDANG')) {
+
+                        return 'border-l-orange-500 bg-orange-500/5';
+                    }
+
+                    if (t.includes('SARAN')) {
+
+                        return 'border-l-indigo-500 bg-indigo-500/5';
+                    }
+
+                    if (t.includes('DISCLAIMER')) {
+
+                        return 'border-l-red-500 bg-red-500/5';
+                    }
+
+
+                    return 'border-l-gray-500 bg-gray-500/5';
+                };
+
+                return (
+                    <div key={idx} className={`border-l-4 rounded-r-lg overflow-hidden mb-4 ${getSectionStyle(displayTitle)}`}>
+                        <button
+                            onClick={() => toggleSection(sectionKey)}
+                            className="flex items-center justify-between w-full text-left px-4 py-3 bg-[#151515]/80 hover:bg-[#1a1a1a]/80 transition-colors"
+                        >
+                            <span className="font-bold text-white text-sm tracking-wide">
+                                {displayTitle}
+                            </span>
+                            {isExpanded ? (
+                                <ChevronDown className="w-4 h-4 text-gray-400" />
+                            ) : (
+                                <ChevronRight className="w-4 h-4 text-gray-400" />
+                            )}
+                        </button>
+
+                        {isExpanded && (
+                            <div className="px-4 py-4 text-gray-200 whitespace-pre-wrap text-sm leading-relaxed bg-[#0a0a0a]/60">
+                                {section.content.split(/\n\s*\n/).filter(p => p.trim() !== '').map((para, i) => (
+                                    <div key={i} className="mb-3 last:mb-0 whitespace-pre-wrap">{para}</div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function parseContent(content: string): { title: string; content: string }[] {
+    const sections: { title: string; content: string }[] = [];
+
+    // Split by common section markers
+    const lines = content.split('\n');
+    let currentTitle = 'Jawaban';
+    let currentContent: string[] = [];
+
+    const sectionKeywords = [
+        'Penjelasan singkat',
+        'Dasar hukum',
+        'Artinya bagi situasi Anda',
+        'Saran praktis',
+        'Disclaimer'
+    ];
+
+    for (const line of lines) {
+        const trimmedLine = line.trim();
+        const isSectionHeader = sectionKeywords.some(kw =>
+            trimmedLine.toLowerCase().includes(kw.toLowerCase())
+        ) && trimmedLine.endsWith(':');
+
+        if (isSectionHeader && currentContent.length > 0) {
+            sections.push({ title: currentTitle, content: currentContent.join('\n').trim() });
+            currentTitle = trimmedLine.replace(/:\s*$/, '').trim();
+            currentContent = [];
+        } else if (isSectionHeader) {
+            currentTitle = trimmedLine.replace(/:\s*$/, '').trim();
+        } else {
+            currentContent.push(trimmedLine);
+        }
+    }
+
+    if (currentContent.length > 0) {
+        sections.push({ title: currentTitle, content: currentContent.join('\n').trim() });
+    }
+
+    // If no clear sections found, return as single section
+    if (sections.length === 0 || (sections.length === 1 && sections[0].title === 'Jawaban')) {
+        return [{ title: 'Jawaban', content: sanitizeText(content) }];
+    }
+
+    // Sanitize sections content
+    return sections.map(sec => ({
+        title: sanitizeText(sec.title),
+        content: sanitizeText(sec.content)
+    }));
+}
 
 interface ChatWindowProps {
     messages: ChatMessage[];
@@ -64,6 +234,7 @@ export default function ChatWindow({ messages, isLoading, onSendMessage, onClear
         if ('speechSynthesis' in window) {
             window.speechSynthesis.cancel();
         }
+
         setIsSpeaking(false);
     };
 
@@ -138,7 +309,8 @@ export default function ChatWindow({ messages, isLoading, onSendMessage, onClear
         }
     };
 
-    const handleClearChat = () => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _handleClearChat = () => {
         if (onClearChat) {
             onClearChat();
         }
@@ -236,28 +408,28 @@ export default function ChatWindow({ messages, isLoading, onSendMessage, onClear
 
                         <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl">
                             <button
-                                onClick={() => setInput("Apa itu perjanjian kontrak kerja?")}
+                                onClick={() => setInput("Bagaimana prosedur pembagian harta gono-gini saat bercerai?")}
                                 className="p-3 text-left bg-[#1a1a1a] hover:bg-[#252525] border border-[#2d2d2d] rounded-xl transition-colors group"
                             >
-                                <p className="text-sm text-gray-300 group-hover:text-white">Apa itu perjanjian kontrak kerja?</p>
+                                <p className="text-sm text-gray-300 group-hover:text-white">Prosedur perceraian & gono-gini</p>
                             </button>
                             <button
-                                onClick={() => setInput("Bagaimana cara membuat surat izin usaha?")}
+                                onClick={() => setInput("Apa perlindungan hukum dan kemudahan izin untuk pelaku UMKM?")}
                                 className="p-3 text-left bg-[#1a1a1a] hover:bg-[#252525] border border-[#2d2d2d] rounded-xl transition-colors group"
                             >
-                                <p className="text-sm text-gray-300 group-hover:text-white">Cara membuat surat izin usaha</p>
+                                <p className="text-sm text-gray-300 group-hover:text-white">Perlindungan hukum UMKM</p>
                             </button>
                             <button
-                                onClick={() => setInput("Apa hak pekerja menurut UU Ketenagakerjaan?")}
+                                onClick={() => setInput("Bagaimana cara mengecek keaslian sertifikat SHM tanah?")}
                                 className="p-3 text-left bg-[#1a1a1a] hover:bg-[#252525] border border-[#2d2d2d] rounded-xl transition-colors group"
                             >
-                                <p className="text-sm text-gray-300 group-hover:text-white">Hak pekerja menurut UU</p>
+                                <p className="text-sm text-gray-300 group-hover:text-white">Pengecekan sertifikat tanah</p>
                             </button>
                             <button
-                                onClick={() => setInput("Bagaimana prosedur mengajukan gugatan perdata?")}
+                                onClick={() => setInput("Apa bukti yang harus disiapkan untuk melaporkan kasus penipuan pidana?")}
                                 className="p-3 text-left bg-[#1a1a1a] hover:bg-[#252525] border border-[#2d2d2d] rounded-xl transition-colors group"
                             >
-                                <p className="text-sm text-gray-300 group-hover:text-white">Prosedur gugatan perdata</p>
+                                <p className="text-sm text-gray-300 group-hover:text-white">Laporan pidana penipuan</p>
                             </button>
                         </div>
                     </div>
@@ -276,11 +448,15 @@ export default function ChatWindow({ messages, isLoading, onSendMessage, onClear
                             </div>
 
                             <div className={`space-y-2 ${msg.role === 'user' ? 'max-w-[80%]' : 'max-w-full'}`}>
-                                <div className={`p-4 rounded-2xl text-sm leading-relaxed ${msg.role === 'user'
-                                    ? 'bg-[#1a1a1a] text-white rounded-tr-sm'
-                                    : 'text-gray-100'
+                                <div className={`p-4 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.role === 'user'
+                                    ? 'bg-[#1a1a1a] text-white rounded-tr-sm border border-[#2d2d2d]'
+                                    : 'text-gray-100 bg-[#0d0d0d] border border-[#2d2d2d]'
                                     }`}>
-                                    {msg.content}
+                                    {msg.role === 'ai' ? (
+                                        <FormattedChatContent content={sanitizeText(msg.content)} />
+                                    ) : (
+                                        msg.content
+                                    )}
                                 </div>
 
                                 {/* Action buttons for AI messages */}
@@ -306,16 +482,19 @@ export default function ChatWindow({ messages, isLoading, onSendMessage, onClear
                                 )}
 
                                 {msg.role === 'ai' && msg.sources && msg.sources.length > 0 && (
-                                    <div className="mt-3 p-3 rounded-xl border border-[#2d2d2d] bg-[#0d0d0d]">
-                                        <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-2">
-                                            <FileText className="w-3.5 h-3.5" />
-                                            Referensi Hukum
+                                    <div className="mt-4 p-4 rounded-xl border border-[#2ea44f]/30 bg-[#2ea44f]/5 relative overflow-hidden">
+                                        <div className="absolute top-0 left-0 w-1 h-full bg-[#2ea44f]"></div>
+                                        <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                                            <div className="bg-[#2ea44f]/20 p-1 rounded">
+                                                <FileText className="w-4 h-4 text-[#2ea44f]" />
+                                            </div>
+                                            Sumber Hukum Valid
                                         </h4>
-                                        <div className="space-y-2">
+                                        <div className="space-y-3">
                                             {msg.sources.map((src, idx) => (
-                                                <div key={idx} className="text-xs p-2 rounded-md bg-[#1a1a1a] border border-[#2d2d2d]">
-                                                    <span className="font-medium text-indigo-400 block mb-1">{src.title}</span>
-                                                    <span className="text-gray-400">{src.snippet}</span>
+                                                <div key={idx} className="text-sm p-3 rounded-lg bg-[#111111] border border-[#333333] hover:border-[#2ea44f]/50 transition-colors">
+                                                    <span className="font-semibold text-[#2ea44f] block mb-1 text-[15px]">{sanitizeText(src.title)}</span>
+                                                    <span className="text-gray-300 leading-relaxed block">{sanitizeText(src.snippet)}</span>
                                                 </div>
                                             ))}
                                         </div>
